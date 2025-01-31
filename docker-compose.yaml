@@ -1,0 +1,167 @@
+version: '3.8'
+
+services:
+  # User Service
+  user-service:
+    build: ./userms
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.user-service.rule=PathPrefix(`/user`)"
+      - "traefik.http.routers.user-service.entrypoints=web"
+      - "traefik.http.services.user-service.loadbalancer.server.port=8081"
+    networks:
+      - microservices-network
+
+  # Device Service
+  device-service:
+    build: ./devicems
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.device-service.rule=PathPrefix(`/device`)"
+      - "traefik.http.routers.device-service.entrypoints=web"
+      - "traefik.http.services.device-service.loadbalancer.server.port=8080"
+      # WebSocket handling
+      - "traefik.http.routers.device-service.middlewares=websocket-headers"
+      - "traefik.http.middlewares.websocket-headers.headers.customRequestHeaders.Connection=upgrade"
+      - "traefik.http.middlewares.websocket-headers.headers.customRequestHeaders.Upgrade=websocket"
+    networks:
+      - microservices-network
+
+  # Consumer Service
+  consumer-service-1:
+    build: ./consumerms
+    depends_on:
+      - rabbitmq
+      - database1
+      - database2
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.consumer-service-1-ws.rule=PathPrefix(`/ws`)"
+      - "traefik.http.services.consumer-service-1-ws.loadbalancer.server.port=8082"
+    networks:
+      - microservices-network
+    ports:
+      - "8082:8082"  # Expose port 8082 of container to port 8082 on the host
+
+  # Consumer Service 2 (Container 2)
+  consumer-service-2:
+    build: ./consumerms
+    depends_on:
+      - rabbitmq
+      - database1
+      - database2
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.consumer-service-2-ws.rule=PathPrefix(`/ws`)"
+      - "traefik.http.services.consumer-service-2-ws.loadbalancer.server.port=8082"
+    networks:
+      - microservices-network
+    ports:
+      - "8083:8082"  # Expose port 8082 of container to port 8083 on the host
+
+      
+  # Producer Service
+  producer-service:
+    build: ./smartmeterdev
+    depends_on:
+      - rabbitmq
+      - consumer-service-1
+    environment:
+      - device.id=1
+      - SENSOR_FILE_PATH=/app/resources/sensor.csv
+    volumes:
+      - /Users/perseaoana/Documents/ds2024_30444_persea_oana_2/smartmeterdev/sensor.csv:/app/resources/sensor.csv
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.producer-service.rule=PathPrefix(`/producer1`)"
+      - "traefik.http.routers.producer-service.entrypoints=web"
+      - "traefik.http.services.producer-service.loadbalancer.server.port=8083"
+    networks:
+      - microservices-network
+      
+  producer-service-2:
+    build: ./smartmeterdev
+    depends_on:
+      - rabbitmq
+      - consumer-service-2
+    environment:
+      - SENSOR_FILE_PATH=/app/resources/sensor.csv
+      - device.id=11
+    volumes:
+      - /Users/perseaoana/Documents/ds2024_30444_persea_oana_2/smartmeterdev/sensor.csv:/app/resources/sensor.csv
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.producer-service2.rule=PathPrefix(`/producer2`)"
+      - "traefik.http.routers.producer-service2.entrypoints=web"
+      - "traefik.http.services.producer-service2.loadbalancer.server.port=8083"
+    networks:
+      - microservices-network
+
+  # Database 1
+  database1:
+    image: postgres:15-alpine
+    container_name: database1
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: premianta
+      POSTGRES_DB: postgres
+    networks:
+      - microservices-network
+    volumes:
+      - postgres-data-1:/var/lib/postgresql/data
+
+  # Database 2
+  database2:
+    image: postgres:15-alpine
+    container_name: database2
+    ports:
+      - "5435:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: premianta
+      POSTGRES_DB: mydatabase
+    networks:
+      - microservices-network
+    volumes:
+      - postgres-data-2:/var/lib/postgresql/data
+
+  # RabbitMQ
+  rabbitmq:
+    image: rabbitmq:management
+    container_name: rabbitmq
+    ports:
+      - "15672:15672"   # For RabbitMQ Management UI
+      - "5672:5672"     # For AMQP communication (default port for RabbitMQ)
+    networks:
+      - microservices-network
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+  # Traefik Reverse Proxy
+  traefik:
+    image: traefik:v3.2
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --entrypoints.web.address=:80
+    ports:
+      - "80:80"         # Main HTTP entry point
+      - "8080:8080"     # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - microservices-network
+
+networks:
+  microservices-network:
+    driver: bridge
+
+volumes:
+  postgres-data-1:
+  postgres-data-2:
+  rabbitmq-data:
